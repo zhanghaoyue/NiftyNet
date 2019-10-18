@@ -12,18 +12,19 @@ import net_regress
 import net_run
 import net_segment
 
+from tests.niftynet_testcase import NiftyNetTestCase
 
-class EntryPointTest(tf.test.TestCase):
+class EntryPointTest(NiftyNetTestCase):
     def test_wrong_app(self):
         sys.argv = ['', 'train',
                     '-a', 'foo',
                     '-c', os.path.join('config', 'default_segmentation.ini')]
-        with self.assertRaisesRegexp(ValueError, 'module'):
+        with self.assertRaisesRegexp(ValueError, 'application'):
             net_run.main()
 
         sys.argv = ['', 'train',
                     '-c', os.path.join('config', 'default_segmentation.ini')]
-        with self.assertRaisesRegexp(ValueError, 'module'):
+        with self.assertRaisesRegexp(ValueError, 'application'):
             net_run.main()
 
     def test_wrong_config(self):

@@ -1,3 +1,13 @@
+"""
+A preliminary re-implementation of:
+    Hu et al., Weakly-Supervised Convolutional Neural Networks for
+    Multimodal Image Registration, Medical Image Analysis (2018)
+    https://doi.org/10.1016/j.media.2018.07.002
+
+The original implementation and tutorial is available at:
+    https://github.com/YipengHu/label-reg
+"""
+
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
@@ -43,11 +53,15 @@ class RegApp(BaseApplication):
         self.data_param = data_param
         self.registration_param = task_param
 
-        file_lists = self.get_file_lists(data_partitioner)
-
         if self.is_evaluation:
             NotImplementedError('Evaluation is not yet '
                                 'supported in this application.')
+        try:
+            reader_phase = self.action_param.dataset_to_infer
+        except AttributeError:
+            reader_phase = None
+        file_lists = data_partitioner.get_file_lists_by(
+            phase=reader_phase, action=self.action)
 
         self.readers = []
         for file_list in file_lists:
@@ -110,6 +124,8 @@ class RegApp(BaseApplication):
                 return sampler()  # returns image only
 
         if self.is_training:
+            self.patience = self.action_param.patience
+            self.mode = self.action_param.early_stopping_mode
             if self.action_param.validation_every_n > 0:
                 sampler_window = \
                     tf.cond(tf.logical_not(self.is_validation),
@@ -154,13 +170,16 @@ class RegApp(BaseApplication):
                 total_loss = total_loss + \
                     self.net_param.decay * tf.reduce_mean(reg_loss)
 
+            self.total_loss = total_loss
+
             # compute training gradients
             with tf.name_scope('Optimiser'):
                 optimiser_class = OptimiserFactory.create(
                     name=self.action_param.optimiser)
                 self.optimiser = optimiser_class.get_instance(
                     learning_rate=self.action_param.lr)
-            grads = self.optimiser.compute_gradients(total_loss)
+            grads = self.optimiser.compute_gradients(
+                total_loss, colocate_gradients_with_ops=True)
             gradients_collector.add_to_collection(grads)
 
             metrics_dice = loss_func(
@@ -189,7 +208,7 @@ class RegApp(BaseApplication):
                 collection=TF_SUMMARIES)
             outputs_collector.add_to_collection(
                 var=total_loss,
-                name='averaged_total_loss',
+                name='total_loss',
                 average_over_devices=True,
                 summary_type='scalar',
                 collection=TF_SUMMARIES)
@@ -285,6 +304,6 @@ class RegApp(BaseApplication):
         if self.is_training:
             return True
         return self.output_decoder.decode_batch(
-            batch_output['resampled_moving_image'],
+            {'window_resampled':batch_output['resampled_moving_image']},
             batch_output['locations'])
 

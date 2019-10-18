@@ -11,6 +11,7 @@ from niftynet.contrib.segmentation_selective_sampler.sampler_selective import \
 from niftynet.io.image_reader import ImageReader
 from niftynet.io.image_sets_partitioner import ImageSetsPartitioner
 from niftynet.utilities.util_common import ParserNamespace
+from tests.niftynet_testcase import NiftyNetTestCase
 
 
 ### utility function for testing purposes
@@ -60,7 +61,8 @@ MULTI_MOD_DATA = {
         interp_order=3,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(7, 10, 2)
+        spatial_window_size=(7, 10, 2),
+        loader=None
     ),
     'FLAIR': ParserNamespace(
         csv_file=os.path.join('testing_data', 'FLAIRsampler.csv'),
@@ -70,7 +72,8 @@ MULTI_MOD_DATA = {
         interp_order=3,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(7, 10, 2)
+        spatial_window_size=(7, 10, 2),
+        loader=None
     ),
     'Label': ParserNamespace(
         csv_file=os.path.join('testing_data', 'lesion.csv'),
@@ -80,7 +83,8 @@ MULTI_MOD_DATA = {
         interp_order=1,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(7, 10, 2)
+        spatial_window_size=(7, 10, 2),
+        loader=None
     )
 }
 LABEL_TASK = {
@@ -92,7 +96,8 @@ LABEL_TASK = {
         interp_order=3,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(7, 10, 2)
+        spatial_window_size=(7, 10, 2),
+        loader=None
     )
 }
 MULTI_MOD_TASK = ParserNamespace(image=('T1', 'FLAIR'), label=('Label',))
@@ -106,7 +111,8 @@ MOD_2D_DATA = {
         interp_order=3,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(10, 9, 1)
+        spatial_window_size=(10, 9, 1),
+        loader=None
     ),
 }
 MOD_2D_TASK = ParserNamespace(image=('ultrasound',))
@@ -120,7 +126,8 @@ DYNAMIC_MOD_DATA = {
         interp_order=3,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(8, 2)
+        spatial_window_size=(8, 2),
+        loader=None
     ),
     'FLAIR': ParserNamespace(
         csv_file=os.path.join('testing_data', 'FLAIRsampler.csv'),
@@ -130,7 +137,8 @@ DYNAMIC_MOD_DATA = {
         interp_order=3,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(8, 2)
+        spatial_window_size=(8, 2),
+        loader=None
     ),
     'Label': ParserNamespace(
         csv_file=os.path.join('testing_data', 'labels.csv'),
@@ -140,7 +148,8 @@ DYNAMIC_MOD_DATA = {
         interp_order=1,
         pixdim=None,
         axcodes=None,
-        spatial_window_size=(8, 2)
+        spatial_window_size=(8, 2),
+        loader=None
     )
 }
 
@@ -184,7 +193,7 @@ def get_dynamic_window_reader():
     return reader
 
 
-class SelectiveSamplerTest(tf.test.TestCase):
+class SelectiveSamplerTest(NiftyNetTestCase):
     def test_3d_init(self):
         constraint_built = Constraint(compulsory_labels=[1],
                                       min_ratio=0.000001,
@@ -195,9 +204,8 @@ class SelectiveSamplerTest(tf.test.TestCase):
                                    constraint=constraint_built,
                                    windows_per_image=2,
                                    queue_length=10)
-        with self.test_session() as sess:
-            coordinator = tf.train.Coordinator()
-            sampler.run_threads(sess, coordinator, num_threads=1)
+        with self.cached_session() as sess:
+            sampler.run_threads(sess, num_threads=1)
             out = sess.run(sampler.pop_batch_op())
             self.assertTrue(check_constraint(out['label'], constraint_built))
             self.assertAllClose(out['image'].shape, (2, 7, 10, 2, 2))
@@ -211,9 +219,8 @@ class SelectiveSamplerTest(tf.test.TestCase):
     #                              batch_size=2,
     #                              windows_per_image=10,
     #                              queue_length=10)
-    #     with self.test_session() as sess:
-    #         coordinator = tf.train.Coordinator()
-    #         sampler.run_threads(sess, coordinator, num_threads=2)
+    #     with self.cached_session() as sess:
+    #         sampler.run_threads(sess, num_threads=2)
     #         out = sess.run(sampler.pop_batch_op())
     #         self.assertAllClose(out['image'].shape, (2, 10, 9, 1))
     #     sampler.close_all()
@@ -228,9 +235,8 @@ class SelectiveSamplerTest(tf.test.TestCase):
     #                                    min_num_labels=2),
     #                                windows_per_image=2,
     #                                queue_length=2)
-    #     with self.test_session() as sess:
-    #         coordinator = tf.train.Coordinator()
-    #         sampler.run_threads(sess, coordinator, num_threads=2)
+    #     with self.cached_session() as sess:
+    #         sampler.run_threads(sess, num_threads=2)
     #         out = sess.run(sampler.pop_batch_op())
     #         test = np.zeros_like(out['label'])
     #         test[out['label'] == 1] = 1
@@ -257,7 +263,7 @@ class SelectiveSamplerTest(tf.test.TestCase):
     #    sampler.close_all()
 
 
-# class RandomCoordinatesTest(tf.test.TestCase):
+# class RandomCoordinatesTest(NiftyNetTestCase):
 #     def test_coordinates(self):
 #         coords = rand_choice_coordinates(
 #             subject_id=1,

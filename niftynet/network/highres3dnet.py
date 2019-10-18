@@ -18,6 +18,43 @@ class HighRes3DNet(BaseNet):
     implementation of HighRes3DNet:
       Li et al., "On the compactness, efficiency, and representation of 3D
       convolutional networks: Brain parcellation as a pretext task", IPMI '17
+
+      ### Building blocks
+
+      {   }       -  Residual connections: see He et al. "Deep residual learning for
+                                                          image recognition", in CVPR '16
+
+      [CONV]      -  Convolutional layer in form: Activation(Convolution(X))
+                     where X = input tensor or output of previous layer
+
+                     and Activation is a function which includes:
+
+                        a) Batch-Norm
+                        b) Activation Function (ReLu, PreLu, Sigmoid, Tanh etc.)
+                        c) Drop-out layer by sampling random variables from a Bernouilli distribution
+                           if p < 1
+
+      [CONV*]      - Convolutional layer with no activation function
+
+      (r)[D-CONV(d)] - Convolutional layer with dilated convolutions with blocks in
+                     pre-activation mode: D-Convolution(Activation(X))
+                     see He et al., "Identity Mappings in Deep Residual Networks", ECCV '16
+
+                     dilation factor = d
+                     D-CONV(2) : dilated convolution with dilation factor 2
+
+                     repeat factor = r
+                     e.g.
+                     (2)[D-CONV(d)]     : 2 dilated convolutional layers in a row [D-CONV] -> [D-CONV]
+                     { (2)[D-CONV(d)] } : 2 dilated convolutional layers within residual block
+
+    ### Diagram
+
+    INPUT --> [CONV] --> { (3)[D-CONV(1)] } --> { (3)[D-CONV(2)] } --> { (3)[D-CONV(4)] } -> [CONV*] -> Loss
+
+    ### Constraints
+    - Input image size should be divisible by 8
+
     """
 
     def __init__(self,
@@ -28,6 +65,16 @@ class HighRes3DNet(BaseNet):
                  b_regularizer=None,
                  acti_func='prelu',
                  name='HighRes3DNet'):
+        """
+
+        :param num_classes: int, number of channels of output
+        :param w_initializer: weight initialisation for network
+        :param w_regularizer: weight regularisation for network
+        :param b_initializer: bias initialisation for network
+        :param b_regularizer: bias regularisation for network
+        :param acti_func: activation function to use
+        :param name: layer name
+        """
 
         super(HighRes3DNet, self).__init__(
             num_classes=num_classes,
@@ -46,7 +93,15 @@ class HighRes3DNet(BaseNet):
             {'name': 'conv_1', 'n_features': 80, 'kernel_size': 1},
             {'name': 'conv_2', 'n_features': num_classes, 'kernel_size': 1}]
 
-    def layer_op(self, images, is_training, layer_id=-1):
+    def layer_op(self, images, is_training=True, layer_id=-1, **unused_kwargs):
+        """
+
+        :param images: tensor to input to the network. Size has to be divisible by 8
+        :param is_training:  boolean, True if network is in training mode
+        :param layer_id: int, index of the layer to return as output
+        :param unused_kwargs:
+        :return: output of layer indicated by layer_id
+        """
         assert layer_util.check_spatial_dims(
             images, lambda x: x % 8 == 0)
         # go through self.layers, create an instance of each layer
@@ -147,7 +202,7 @@ class HighRes3DNet(BaseNet):
 
 class HighResBlock(TrainableLayer):
     """
-    This class define a high-resolution block with residual connections
+    This class defines a high-resolution block with residual connections
     kernels
 
         - specify kernel sizes of each convolutional layer
@@ -166,6 +221,16 @@ class HighResBlock(TrainableLayer):
                  w_regularizer=None,
                  with_res=True,
                  name='HighResBlock'):
+        """
+
+        :param n_output_chns: int, number of output channels
+        :param kernels: list of layer kernel sizes
+        :param acti_func: activation function to use
+        :param w_initializer: weight initialisation for network
+        :param w_regularizer: weight regularisation for network
+        :param with_res: boolean, set to True if residual connection are to use
+        :param name: layer name
+        """
 
         super(HighResBlock, self).__init__(name=name)
 
@@ -181,6 +246,12 @@ class HighResBlock(TrainableLayer):
         self.regularizers = {'w': w_regularizer}
 
     def layer_op(self, input_tensor, is_training):
+        """
+
+        :param input_tensor: tensor, input to the network
+        :param is_training: boolean, True if network is in training mode
+        :return: tensor, output of the residual block
+        """
         output_tensor = input_tensor
         for (i, k) in enumerate(self.kernels):
             # create parameterised layers

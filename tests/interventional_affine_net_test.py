@@ -4,9 +4,10 @@ import tensorflow as tf
 
 from niftynet.network.toynet import ToyNet
 from niftynet.network.interventional_affine_net import INetAffine
+from tests.niftynet_testcase import NiftyNetTestCase
 
 
-class INetAffineTest(tf.test.TestCase):
+class INetAffineTest(NiftyNetTestCase):
     def test_3d_shape(self):
         input_shape = (2, 32, 32, 32, 1)
         x = tf.ones(input_shape)
@@ -15,23 +16,10 @@ class INetAffineTest(tf.test.TestCase):
         out = affinenet_instance(x, x, is_training=True)
         print(affinenet_instance)
 
-        with self.test_session() as sess:
+        with self.cached_session() as sess:
             sess.run(tf.global_variables_initializer())
             out = sess.run(out)
             self.assertAllClose((2, 32, 32, 32, 3), out.shape)
-
-    def test_3d_shape(self):
-        input_shape = (2, 31, 31, 31, 1)
-        x = tf.ones(input_shape)
-
-        affinenet_instance = INetAffine()
-        out = affinenet_instance(x, x, is_training=True)
-        print(affinenet_instance)
-
-        with self.test_session() as sess:
-            sess.run(tf.global_variables_initializer())
-            out = sess.run(out)
-            self.assertAllClose((2, 31, 31, 31, 3), out.shape)
 
     def test_2d_shape(self):
         input_shape = (2, 32, 32, 1)
@@ -41,7 +29,7 @@ class INetAffineTest(tf.test.TestCase):
         out = affinenet_instance(x, x, is_training=True)
         print(affinenet_instance)
 
-        with self.test_session() as sess:
+        with self.cached_session() as sess:
             sess.run(tf.global_variables_initializer())
             out = sess.run(out)
             self.assertAllClose((2, 32, 32, 2), out.shape)

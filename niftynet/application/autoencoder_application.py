@@ -6,8 +6,8 @@ from niftynet.engine.application_factory import OptimiserFactory
 from niftynet.engine.application_variables import CONSOLE
 from niftynet.engine.application_variables import NETWORK_OUTPUT
 from niftynet.engine.application_variables import TF_SUMMARIES
-from niftynet.engine.sampler_linear_interpolate import LinearInterpolateSampler
-from niftynet.engine.sampler_resize import ResizeSampler
+from niftynet.engine.sampler_linear_interpolate_v2 import LinearInterpolateSampler
+from niftynet.engine.sampler_resize_v2 import ResizeSampler
 from niftynet.engine.windows_aggregator_identity import WindowAsImageAggregator
 from niftynet.io.image_reader import ImageReader
 from niftynet.layer.loss_autoencoder import LossFunction
@@ -43,8 +43,12 @@ class AutoencoderApplication(BaseApplication):
                 self.autoencoder_param.inference_type, SUPPORTED_INFERENCE)
         else:
             self._infer_type = None
-
-        file_lists = self.get_file_lists(data_partitioner)
+        try:
+            reader_phase = self.action_param.dataset_to_infer
+        except AttributeError:
+            reader_phase = None
+        file_lists = data_partitioner.get_file_lists_by(
+            phase=reader_phase, action=self.action)
         # read each line of csv files into an instance of Subject
         if self.is_evaluation:
             NotImplementedError('Evaluation is not yet '
@@ -57,16 +61,12 @@ class AutoencoderApplication(BaseApplication):
                 self.readers.append(reader)
         if self._infer_type in ('encode', 'encode-decode'):
             self.readers = [ImageReader(['image'])]
-            self.readers[0].initialise(data_param,
-                                       task_param,
-                                       file_lists[0])
+            self.readers[0].initialise(data_param, task_param, file_lists[0])
         elif self._infer_type == 'sample':
             self.readers = []
         elif self._infer_type == 'linear_interpolation':
             self.readers = [ImageReader(['feature'])]
-            self.readers[0].initialise(data_param,
-                                       task_param,
-                                       [file_lists])
+            self.readers[0].initialise(data_param, task_param, file_lists[0])
         # if self.is_training or self._infer_type in ('encode', 'encode-decode'):
         #    mean_var_normaliser = MeanVarNormalisationLayer(image_name='image')
         #    self.reader.add_preprocessing_layers([mean_var_normaliser])
@@ -76,27 +76,27 @@ class AutoencoderApplication(BaseApplication):
         if self.is_training:
             self.sampler.append([ResizeSampler(
                 reader=reader,
-                data_param=self.data_param,
+                window_sizes=self.data_param,
                 batch_size=self.net_param.batch_size,
                 windows_per_image=1,
-                shuffle_buffer=True,
+                shuffle=True,
                 queue_length=self.net_param.queue_length) for reader in
                 self.readers])
             return
         if self._infer_type in ('encode', 'encode-decode'):
             self.sampler.append([ResizeSampler(
                 reader=reader,
-                data_param=self.data_param,
+                window_sizes=self.data_param,
                 batch_size=self.net_param.batch_size,
                 windows_per_image=1,
-                shuffle_buffer=False,
+                shuffle=False,
                 queue_length=self.net_param.queue_length) for reader in
                 self.readers])
             return
         if self._infer_type == 'linear_interpolation':
             self.sampler.append([LinearInterpolateSampler(
                 reader=reader,
-                data_param=self.data_param,
+                window_sizes=self.data_param,
                 batch_size=self.net_param.batch_size,
                 n_interpolations=self.autoencoder_param.n_interpolations,
                 queue_length=self.net_param.queue_length) for reader in
@@ -130,6 +130,8 @@ class AutoencoderApplication(BaseApplication):
                 return sampler.pop_batch_op()
 
         if self.is_training:
+            self.patience = self.action_param.patience
+            self.mode = self.action_param.early_stopping_mode
             if self.action_param.validation_every_n > 0:
                 data_dict = tf.cond(tf.logical_not(self.is_validation),
                                     lambda: switch_sampler(True),
@@ -156,9 +158,20 @@ class AutoencoderApplication(BaseApplication):
                     reg_loss = tf.reduce_mean(
                         [tf.reduce_mean(reg_loss) for reg_loss in reg_losses])
                     loss = loss + reg_loss
-            grads = self.optimiser.compute_gradients(loss)
+
+            self.total_loss = loss
+            grads = self.optimiser.compute_gradients(
+                loss, colocate_gradients_with_ops=True)
             # collecting gradients variables
             gradients_collector.add_to_collection([grads])
+
+            outputs_collector.add_to_collection(
+                var=self.total_loss, name='total_loss',
+                average_over_devices=True, collection=CONSOLE)
+            outputs_collector.add_to_collection(
+                var=self.total_loss, name='total_loss',
+                average_over_devices=True, summary_type='scalar',
+                collection=TF_SUMMARIES)
 
             outputs_collector.add_to_collection(
                 var=data_loss, name='variational_lower_bound',
@@ -261,17 +274,17 @@ class AutoencoderApplication(BaseApplication):
                 SUPPORTED_INFERENCE)
             if infer_type == 'encode':
                 return self.output_decoder.decode_batch(
-                    batch_output['embedded'],
+                    {'window_embedded':batch_output['embedded']},
                     batch_output['location'][:, 0:1])
             if infer_type == 'encode-decode':
                 return self.output_decoder.decode_batch(
-                    batch_output['generated_image'],
+                    {'window_generated_image':batch_output['generated_image']},
                     batch_output['location'][:, 0:1])
             if infer_type == 'sample':
                 return self.output_decoder.decode_batch(
-                    batch_output['generated_image'],
+                    {'window_generated_image':batch_output['generated_image']},
                     None)
             if infer_type == 'linear_interpolation':
                 return self.output_decoder.decode_batch(
-                    batch_output['generated_image'],
+                    {'window_generated_image':batch_output['generated_image']},
                     batch_output['location'][:, :2])

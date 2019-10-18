@@ -9,19 +9,32 @@ from niftynet.layer.base_layer import TrainableLayer
 from niftynet.layer.convolution import ConvolutionalLayer
 from niftynet.layer.deconvolution import DeconvolutionalLayer
 from niftynet.layer.fully_connected import FullyConnectedLayer
-from niftynet.layer.reshape import ReshapeLayer
 from niftynet.layer.upsample import UpSampleLayer
 
 
 class VAE(TrainableLayer):
     """
-    This is a denoising, convolutional, variational autoencoder (VAE),
-    composed of a sequence of {convolutions then downsampling} blocks,
-    followed by a sequence of fully-connected layers,
-    followed by a sequence of {transpose convolutions then upsampling} blocks.
-    See Auto-Encoding Variational Bayes, Kingma & Welling, 2014.
-    2DO: share the fully-connected parameters
-    between the mean and logvar decoders.
+    ### Description
+        This is a denoising, convolutional, variational autoencoder (VAE),
+        composed of a sequence of {convolutions then downsampling} blocks,
+        followed by a sequence of fully-connected layers,
+        followed by a sequence of {transpose convolutions then upsampling} blocks.
+        See Auto-Encoding Variational Bayes, Kingma & Welling, 2014.
+        2DO: share the fully-connected parameters
+        between the mean and logvar decoders.
+
+    ### Building Blocks
+    [ENCODER]               - See ConvEncoder class below
+    [GAUSSIAN SAMPLER]      - See GaussianSampler class below
+    [DECODER]               - See ConvDecoder class below
+
+    ### Diagram
+
+    INPUT --> [ENCODER] --> [GAUSSIAN SAMPLER] --> [FCDEC] ---> [DECODER] for means --- OUTPUTS
+                                                        |                               |
+                                                        ------> [DECODER] for logvars ---
+
+    ### Constraints
     """
 
     def __init__(self,
@@ -30,6 +43,14 @@ class VAE(TrainableLayer):
                  b_initializer=None,
                  b_regularizer=None,
                  name='VAE'):
+        """
+
+        :param w_initializer: weight initialisation for network
+        :param w_regularizer: weight regularisation for network
+        :param b_initializer: bias initialisation for network
+        :param b_regularizer: bias regularisation for network
+        :param name: layer name
+        """
 
         super(VAE, self).__init__(name=name)
 
@@ -130,20 +151,50 @@ class VAE(TrainableLayer):
         self.initializers = {'w': w_initializer, 'b': b_initializer}
         self.regularizers = {'w': w_regularizer, 'b': b_regularizer}
 
-    def layer_op(self, images, is_training):
+    def layer_op(self, images, is_training=True, **unused_kwargs):
+        """
+
+        :param images: tensor, input to the network
+        :param is_training: boolean, True if network is in training mode
+        :param unused_kwargs: other conditional arguments, not in use
+        :return: posterior_means: means output by gaussian sampler for KL divergence
+                posterior_logvars: log of variances output by gaussian sampler for KL divergence
+                data_means: output of means decoder branch (predicted image)
+                data_logvars: output of variances decoder branch (capturing aleatoric uncertainty)
+                images: input
+                data_variances: exp of data_logvars
+                posterior_variances: exp of posterior_logvars
+                sample: random sample from latent space (from gaussian sampler)
+        """
 
         def clip(x):
+            """
+            Clip input tensor using the lower and upper bounds
+            :param x: tensor, input
+            :return: clipped tensor
+            """
             return tf.clip_by_value(x, self.logvars_lower_bound,
                                     self.logvars_upper_bound)
 
         def normalise(x):
+            """
+            Normalise input to [0, 255]
+            :param x: tensor, input to normalise
+            :return: normalised tensor in [0, 255]
+            """
             min_val = tf.reduce_min(x)
             max_val = tf.reduce_max(x)
             return 255 * (x - min_val) / (max_val - min_val)
 
         def infer_downsampled_shape(x, output_channels, pooling_factors):
-            # Calculate the shape of the data as it emerges from
-            # the convolutional part of the encoder
+            """
+            Calculate the shape of the data as it emerges from
+            the convolutional part of the encoder
+            :param x: tensor, input
+            :param output_channels: int, number of output channels
+            :param pooling_factors: array, pooling factors
+            :return: array, shape of downsampled image
+            """
             downsampled_shape = x.shape[1::].as_list()
             downsampled_shape[-1] = output_channels[-1]
             downsampled_shape[0:-1] = \
@@ -260,10 +311,11 @@ class VAE(TrainableLayer):
 
 class ConvEncoder(TrainableLayer):
     """
+    ### Description
         This is a generic encoder composed of
         {convolutions then downsampling} blocks followed by
         fully-connected layers.
-        """
+    """
 
     def __init__(self,
                  denoising_variance,
@@ -279,6 +331,22 @@ class ConvEncoder(TrainableLayer):
                  b_initializer=None,
                  b_regularizer=None,
                  name='ConvEncoder'):
+        """
+
+        :param denoising_variance: variance of gaussian noise to add to the input
+        :param conv_output_channels: array, number of output channels for each conv layer
+        :param conv_kernel_sizes: array, kernel sizes for each conv layer
+        :param conv_pooling_factors: array, stride values for downsampling convolutions
+        :param acti_func_conv: array, activation functions of each layer
+        :param layer_sizes_encoder: array, number of output channels for each encoding FC layer
+        :param acti_func_encoder: array, activation functions for each encoding FC layer
+        :param serialised_shape: array, flatten shape to enter the FC layers
+        :param w_initializer: weight initialisation for network
+        :param w_regularizer: weight regularisation for network
+        :param b_initializer: bias initialisation for network
+        :param b_regularizer: bias regularisation for network
+        :param name: layer name
+        """
 
         super(ConvEncoder, self).__init__(name=name)
 
@@ -295,6 +363,12 @@ class ConvEncoder(TrainableLayer):
         self.regularizers = {'w': w_regularizer, 'b': b_regularizer}
 
     def layer_op(self, images, is_training):
+        """
+
+        :param images: tensor, input to the network
+        :param is_training: boolean, True if network is in training mode
+        :return: tensor, output of the encoder branch
+        """
 
         # Define the encoding convolutional layers
         encoders_cnn = []
@@ -305,7 +379,7 @@ class ConvEncoder(TrainableLayer):
                 kernel_size=self.conv_kernel_sizes[i],
                 padding='SAME',
                 with_bias=True,
-                with_bn=True,
+                feature_normalization='batch',
                 w_initializer=self.initializers['w'],
                 w_regularizer=None,
                 acti_func=self.acti_func_conv[i],
@@ -320,7 +394,7 @@ class ConvEncoder(TrainableLayer):
                 stride=self.conv_pooling_factors[i],
                 padding='SAME',
                 with_bias=False,
-                with_bn=True,
+                feature_normalization='batch',
                 w_initializer=self.initializers['w'],
                 w_regularizer=None,
                 acti_func=self.acti_func_conv[i],
@@ -330,16 +404,13 @@ class ConvEncoder(TrainableLayer):
 
             print(encoders_downsamplers[-1])
 
-        serialise_feature_maps = ReshapeLayer([-1, self.serialised_shape])
-        print(serialise_feature_maps)
-
         # Define the encoding fully-connected layers
         encoders_fc = []
         for i in range(0, len(self.layer_sizes_encoder)):
             encoders_fc.append(FullyConnectedLayer(
                 n_output_chns=self.layer_sizes_encoder[i],
                 with_bias=True,
-                with_bn=True,
+                feature_normalization='batch',
                 acti_func=self.acti_func_encoder[i],
                 w_initializer=self.initializers['w'],
                 w_regularizer=self.regularizers['w'],
@@ -359,7 +430,7 @@ class ConvEncoder(TrainableLayer):
                 encoders_cnn[i](flow, is_training), is_training)
 
         # Flatten the feature maps
-        flow = serialise_feature_maps(flow)
+        flow = tf.reshape(flow, [-1, self.serialised_shape])
 
         # Fully-connected encoder layers
         for i in range(0, len(self.layer_sizes_encoder)):
@@ -370,8 +441,14 @@ class ConvEncoder(TrainableLayer):
 
 class GaussianSampler(TrainableLayer):
     """
+    ### Description
         This predicts the mean and logvariance parameters,
         then generates an approximate sample from the posterior.
+
+    ### Diagram
+
+    ### Constraints
+
     """
 
     def __init__(self,
@@ -384,6 +461,18 @@ class GaussianSampler(TrainableLayer):
                  b_initializer=None,
                  b_regularizer=None,
                  name='gaussian_sampler'):
+        """
+
+        :param number_of_latent_variables: int, number of output channels for FC layer
+        :param number_of_samples_from_posterior: int, number of samples to draw from standard gaussian
+        :param logvars_upper_bound: upper bound of log of variances for clipping
+        :param logvars_lower_bound: lower bound of log of variances for clipping
+        :param w_initializer: weight initialisation for network
+        :param w_regularizer: weight regularisation for network
+        :param b_initializer: bias initialisation for network
+        :param b_regularizer: bias regularisation for network
+        :param name: layer name
+        """
 
         super(GaussianSampler, self).__init__(name=name)
 
@@ -396,6 +485,12 @@ class GaussianSampler(TrainableLayer):
         self.regularizers = {'w': w_regularizer, 'b': b_regularizer}
 
     def layer_op(self, codes, is_training):
+        """
+
+        :param codes: tensor, input latent space
+        :param is_training: boolean, True if network is in training mode
+        :return: samples from posterior distribution, means and log variances of the posterior distribution
+        """
 
         def clip(input):
             # This is for clipping logvars,
@@ -406,7 +501,7 @@ class GaussianSampler(TrainableLayer):
 
         encoder_means = FullyConnectedLayer(
             n_output_chns=self.number_of_latent_variables,
-            with_bn=False,
+            feature_normalization=None,
             acti_func=None,
             w_initializer=self.initializers['w'],
             w_regularizer=self.regularizers['w'],
@@ -415,7 +510,7 @@ class GaussianSampler(TrainableLayer):
 
         encoder_logvars = FullyConnectedLayer(
             n_output_chns=self.number_of_latent_variables,
-            with_bn=False,
+            feature_normalization=None,
             acti_func=None,
             w_initializer=self.initializers['w'],
             w_regularizer=self.regularizers['w'],
@@ -445,11 +540,12 @@ class GaussianSampler(TrainableLayer):
 
 class ConvDecoder(TrainableLayer):
     """
-    This is a generic decoder composed of
-    fully-connected layers followed by
-    {upsampling then transpose convolution} blocks.
-    There is no batch normalisation on
-    the final transpose convolutional layer.
+    ### Description
+            This is a generic decoder composed of
+            fully-connected layers followed by
+            {upsampling then transpose convolution} blocks.
+            There is no batch normalisation on
+            the final transpose convolutional layer.
     """
 
     def __init__(self,
@@ -466,6 +562,22 @@ class ConvDecoder(TrainableLayer):
                  b_initializer=None,
                  b_regularizer=None,
                  name='ConvDecoder'):
+        """
+
+        :param layer_sizes_decoder: array, number of output channels for each decoding FC layer
+        :param acti_func_decoder: array, activation functions for each decoding FC layer
+        :param trans_conv_output_channels: array, number of output channels for each transpose conv layer
+        :param trans_conv_kernel_sizes: array, kernel sizes for each transpose conv layer
+        :param trans_conv_unpooling_factors: array, stride values for upsampling transpose convolutions
+        :param acti_func_trans_conv: array, activation functions for each transpose conv layer
+        :param upsampling_mode: string, type of upsampling (Deconvolution, channelwise deconvolution, replicate)
+        :param downsampled_shape: array, final encoded shape before FC in encoder
+        :param w_initializer: weight initialisation for network
+        :param w_regularizer: weight regularisation for network
+        :param b_initializer: bias initialisation for network
+        :param b_regularizer: bias regularisation for network
+        :param name: layer name
+        """
 
         super(ConvDecoder, self).__init__(name=name)
 
@@ -482,6 +594,12 @@ class ConvDecoder(TrainableLayer):
         self.regularizers = {'w': w_regularizer, 'b': b_regularizer}
 
     def layer_op(self, codes, is_training):
+        """
+
+        :param codes: tensor, input latent space after gaussian sampling
+        :param is_training: boolean, True if network is in training mode
+        :return: tensor, output of decoding branch
+        """
 
         # Define the decoding fully-connected layers
         decoders_fc = []
@@ -489,15 +607,12 @@ class ConvDecoder(TrainableLayer):
             decoders_fc.append(FullyConnectedLayer(
                 n_output_chns=self.layer_sizes_decoder[i],
                 with_bias=True,
-                with_bn=True,
+                feature_normalization='batch',
                 acti_func=self.acti_func_decoder[i],
                 w_initializer=self.initializers['w'],
                 w_regularizer=self.regularizers['w'],
                 name='decoder_fc_{}'.format(self.layer_sizes_decoder[i])))
             print(decoders_fc[-1])
-
-        reconstitute_feature_maps = ReshapeLayer([-1] + self.downsampled_shape)
-        print(reconstitute_feature_maps)
 
         # Define the decoding convolutional layers
         decoders_cnn = []
@@ -510,7 +625,7 @@ class ConvDecoder(TrainableLayer):
                     stride=self.trans_conv_unpooling_factors[i],
                     padding='SAME',
                     with_bias=True,
-                    with_bn=True,
+                    feature_normalization='batch',
                     w_initializer=self.initializers['w'],
                     w_regularizer=None,
                     acti_func=None,
@@ -525,8 +640,8 @@ class ConvDecoder(TrainableLayer):
                 stride=1,
                 padding='SAME',
                 with_bias=True,
-                with_bn=True,
-                #with_bn=not (i == len(self.trans_conv_output_channels) - 1),
+                feature_normalization='batch',
+                #feature_normalization=not (i == len(self.trans_conv_output_channels) - 1),
                 # No BN on output
                 w_initializer=self.initializers['w'],
                 w_regularizer=None,
@@ -542,7 +657,7 @@ class ConvDecoder(TrainableLayer):
             flow = decoders_fc[i](flow, is_training)
 
         # Reconstitute the feature maps
-        flow = reconstitute_feature_maps(flow)
+        flow = tf.reshape(flow, [-1] + self.downsampled_shape)
 
         # Convolutional decoder layers
         for i in range(0, len(self.trans_conv_output_channels)):
@@ -565,8 +680,9 @@ class ConvDecoder(TrainableLayer):
 
 class FCDecoder(TrainableLayer):
     """
+    ### Description
         This is a generic fully-connected decoder.
-        """
+    """
 
     def __init__(self,
                  layer_sizes_decoder,
@@ -576,6 +692,16 @@ class FCDecoder(TrainableLayer):
                  b_initializer=None,
                  b_regularizer=None,
                  name='FCDecoder'):
+        """
+
+        :param layer_sizes_decoder: array, number of output channels for each decoding FC layer
+        :param acti_func_decoder: array, activation functions for each decoding FC layer
+        :param w_initializer: weight initialisation for network
+        :param w_regularizer: weight regularisation for network
+        :param b_initializer: bias initialisation for network
+        :param b_regularizer: bias regularisation for network
+        :param name: layer name
+        """
 
         super(FCDecoder, self).__init__(name=name)
 
@@ -586,6 +712,12 @@ class FCDecoder(TrainableLayer):
         self.regularizers = {'w': w_regularizer, 'b': b_regularizer}
 
     def layer_op(self, codes, is_training):
+        """
+
+        :param codes: tensor, input latent codes
+        :param is_training: boolean, True if network is in training mode
+        :return: tensor, output of series of FC layers
+        """
 
         # Define the decoding fully-connected layers
         decoders_fc = []
@@ -593,7 +725,7 @@ class FCDecoder(TrainableLayer):
             decoders_fc.append(FullyConnectedLayer(
                 n_output_chns=self.layer_sizes_decoder[i],
                 with_bias=True,
-                with_bn=True,
+                feature_normalization='batch',
                 acti_func=self.acti_func_decoder[i],
                 w_initializer=self.initializers['w'],
                 w_regularizer=self.regularizers['w'],

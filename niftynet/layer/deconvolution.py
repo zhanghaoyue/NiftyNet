@@ -7,11 +7,13 @@ import tensorflow as tf
 from niftynet.layer import layer_util
 from niftynet.layer.activation import ActiLayer
 from niftynet.layer.base_layer import TrainableLayer
-from niftynet.layer.bn import BNLayer
+from niftynet.layer.bn import BNLayer, InstanceNormLayer
+from niftynet.layer.gn import GNLayer
 from niftynet.utilities.util_common import look_up_operations
 
-SUPPORTED_OP = {'2D': tf.nn.conv2d_transpose,
-                '3D': tf.nn.conv3d_transpose}
+SUPPORTED_OP = {
+    '2D': tf.nn.conv2d_transpose,
+    '3D': tf.nn.conv3d_transpose}
 SUPPORTED_PADDING = set(['SAME', 'VALID'])
 
 
@@ -38,12 +40,16 @@ def infer_output_dims(input_dims, strides, kernel_sizes, padding):
     """
     assert len(input_dims) == len(strides)
     assert len(input_dims) == len(kernel_sizes)
-    if padding == 'VALID':
-        output_dims = [
-            dim * strides[i] + max(kernel_sizes[i] - strides[i], 0)
-            for (i, dim) in enumerate(input_dims)]
-    else:
-        output_dims = [dim * strides[i] for (i, dim) in enumerate(input_dims)]
+    output_dims = []
+    for (i, dim) in enumerate(input_dims):
+        if dim is None:
+            output_dims.append(None)
+            continue
+        if padding == 'VALID':
+            output_dims.append(
+                dim * strides[i] + max(kernel_sizes[i] - strides[i], 0))
+        else:
+            output_dims.append(dim * strides[i])
     return output_dims
 
 
@@ -105,11 +111,25 @@ class DeconvLayer(TrainableLayer):
             raise ValueError(
                 "Only 2D and 3D spatial deconvolutions are supported")
 
-        output_dims = infer_output_dims(input_shape[1:-1],
+        spatial_shape = []
+        for (i, dim) in enumerate(input_shape[:-1]):
+            if i == 0:
+                continue
+            if dim is None:
+                spatial_shape.append(tf.shape(input_tensor)[i])
+            else:
+                spatial_shape.append(dim)
+        output_dims = infer_output_dims(spatial_shape,
                                         stride_all_dim,
                                         kernel_size_all_dim,
                                         self.padding)
-        full_output_size = [input_shape[0]] + output_dims + [self.n_output_chns]
+        if input_tensor.shape.is_fully_defined():
+            full_output_size = \
+                [input_shape[0]] + output_dims + [self.n_output_chns]
+        else:
+            batch_size = tf.shape(input_tensor)[0]
+            full_output_size = tf.stack(
+                [batch_size] + output_dims + [self.n_output_chns])
         output_tensor = op_(value=input_tensor,
                             filter=deconv_kernel,
                             output_shape=full_output_size,
@@ -148,7 +168,8 @@ class DeconvolutionalLayer(TrainableLayer):
                  stride=1,
                  padding='SAME',
                  with_bias=False,
-                 with_bn=True,
+                 feature_normalization='batch',
+                 group_size=-1,
                  acti_func=None,
                  w_initializer=None,
                  w_regularizer=None,
@@ -159,10 +180,17 @@ class DeconvolutionalLayer(TrainableLayer):
                  name="deconv"):
 
         self.acti_func = acti_func
-        self.with_bn = with_bn
+        self.feature_normalization = feature_normalization
+        self.group_size = group_size
         self.layer_name = '{}'.format(name)
-        if self.with_bn:
-            self.layer_name += '_bn'
+        if self.feature_normalization != 'group' and group_size > 0:
+            raise ValueError('You cannot have a group_size > 0 if not using group norm')
+        elif self.feature_normalization == 'group' and group_size <= 0:
+            raise ValueError('You cannot have a group_size <= 0 if using group norm')
+
+        if self.feature_normalization is not None:
+            # appending, for example, '_bn' to the name 
+            self.layer_name += '_' + self.feature_normalization[0] + 'n'
         if self.acti_func is not None:
             self.layer_name += '_{}'.format(self.acti_func)
         super(DeconvolutionalLayer, self).__init__(name=self.layer_name)
@@ -198,16 +226,26 @@ class DeconvolutionalLayer(TrainableLayer):
                                    name='deconv_')
         output_tensor = deconv_layer(input_tensor)
 
-        if self.with_bn:
+        if self.feature_normalization == 'batch':
             if is_training is None:
                 raise ValueError('is_training argument should be '
-                                 'True or False unless with_bn is False')
+                                 'True or False unless feature_normalization is False')
             bn_layer = BNLayer(
                 regularizer=self.regularizers['w'],
                 moving_decay=self.moving_decay,
                 eps=self.eps,
                 name='bn_')
             output_tensor = bn_layer(output_tensor, is_training)
+        elif self.feature_normalization == 'instance':
+            in_layer = InstanceNormLayer(eps=self.eps, name='in_')
+            output_tensor = in_layer(output_tensor)
+        elif self.feature_normalization == 'group':
+            gn_layer = GNLayer(
+                regularizer=self.regularizers['w'],
+                group_size=self.group_size,
+                eps=self.eps,
+                name='gn_')
+            output_tensor = gn_layer(output_tensor)
 
         if self.acti_func is not None:
             acti_layer = ActiLayer(
@@ -219,4 +257,5 @@ class DeconvolutionalLayer(TrainableLayer):
         if keep_prob is not None:
             dropout_layer = ActiLayer(func='dropout', name='dropout_')
             output_tensor = dropout_layer(output_tensor, keep_prob=keep_prob)
+
         return output_tensor

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+"""
+This module defines task specific parameters
+"""
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
-from niftynet.utilities.user_parameters_helper import add_input_name_args
-from niftynet.utilities.user_parameters_helper import int_array
-from niftynet.utilities.user_parameters_helper import str2boolean
+from niftynet.utilities.user_parameters_helper import (add_input_name_args,
+                                                       int_array, str2boolean)
 
 
 #######################################################################
@@ -33,14 +33,25 @@ from niftynet.utilities.user_parameters_helper import str2boolean
 
 
 def add_customised_args(parser, task_name):
+    """
+    loading keywords arguments to parser by task name
+    :param parser:
+    :param task_name: supported choices are listed in `SUPPORTED_ARG_SECTIONS`
+    :return: parser with updated actions
+    """
     task_name = task_name.upper()
     if task_name in SUPPORTED_ARG_SECTIONS:
         return SUPPORTED_ARG_SECTIONS[task_name](parser)
-    else:
-        raise NotImplementedError
+    raise NotImplementedError
 
 
 def __add_regression_args(parser):
+    """
+    keywords defined for regression tasks
+
+    :param parser:
+    :return:
+    """
     parser.add_argument(
         "--loss_border",
         metavar='',
@@ -63,6 +74,12 @@ def __add_regression_args(parser):
 
 
 def __add_segmentation_args(parser):
+    """
+    keywords defined for segmentation tasks
+
+    :param parser:
+    :return:
+    """
     parser.add_argument(
         "--num_classes",
         metavar='',
@@ -85,6 +102,14 @@ def __add_segmentation_args(parser):
         type=str2boolean,
         default=False)
 
+    parser.add_argument(
+        "--softmax",
+        metavar='',
+        help="[Training only] whether to append a softmax layer to network "
+             "output before feeding it into loss function",
+        type=str2boolean,
+        default=True)
+
     # for selective sampling only
     parser.add_argument(
         "--min_sampling_ratio",
@@ -92,8 +117,7 @@ def __add_segmentation_args(parser):
              "selective sampler",
         metavar='',
         type=float,
-        default=0
-    )
+        default=0)
 
     # for selective sampling only
     parser.add_argument(
@@ -102,8 +126,7 @@ def __add_segmentation_args(parser):
              "selective sampling",
         metavar='',
         type=int_array,
-        default=(0, 1)
-    )
+        default=(0, 1))
 
     # for selective sampling only
     parser.add_argument(
@@ -112,8 +135,7 @@ def __add_segmentation_args(parser):
              "when using selective sampler",
         metavar='',
         type=int,
-        default=0
-    )
+        default=0)
 
     # for selective sampling only
     parser.add_argument(
@@ -122,8 +144,7 @@ def __add_segmentation_args(parser):
              "selective sampler",
         metavar='',
         type=int,
-        default=1
-    )
+        default=1)
 
     # for selective sampling only
     parser.add_argument(
@@ -132,15 +153,37 @@ def __add_segmentation_args(parser):
              "selective sampler",
         metavar='',
         type=str2boolean,
-        default=True
-    )
+        default=True)
 
     parser.add_argument(
         "--evaluation_units",
         help="Compute per-component metrics for per label or per connected "
              "component. [foreground, label, or cc]",
-        choices = ['foreground', 'label', 'cc'],
+        choices=['foreground', 'label', 'cc'],
         default='foreground')
+
+    #  for mixup augmentation
+    parser.add_argument(
+        "--do_mixup",
+        help="Use the 'mixup' option.",
+        type=str2boolean,
+        default=False)
+
+    #  for mixup augmentation
+    parser.add_argument(
+        "--mixup_alpha",
+        help="The alpha value to parametrise the beta distribution "
+             "(alpha, alpha). Default: 0.2.",
+        type=float,
+        default=0.2)
+
+    #  for mixup augmentation
+    parser.add_argument(
+        "--mix_match",
+        help="If true, matches bigger segmentations with "
+             "smaller segmentations.",
+        type=str2boolean,
+        default=False)
 
     from niftynet.application.segmentation_application import SUPPORTED_INPUT
     parser = add_input_name_args(parser, SUPPORTED_INPUT)
@@ -148,6 +191,12 @@ def __add_segmentation_args(parser):
 
 
 def __add_gan_args(parser):
+    """
+    keywords defined for GAN
+
+    :param parser:
+    :return:
+    """
     parser.add_argument(
         "--noise_size",
         metavar='',
@@ -168,6 +217,12 @@ def __add_gan_args(parser):
 
 
 def __add_classification_args(parser):
+    """
+    keywords defined for classification
+
+    :param parser:
+    :return:
+    """
     parser.add_argument(
         "--num_classes",
         metavar='',
@@ -190,13 +245,18 @@ def __add_classification_args(parser):
         type=str2boolean,
         default=False)
 
-
     from niftynet.application.classification_application import SUPPORTED_INPUT
     parser = add_input_name_args(parser, SUPPORTED_INPUT)
     return parser
 
 
 def __add_autoencoder_args(parser):
+    """
+    keywords defined for autoencoder
+
+    :param parser:
+    :return:
+    """
     from niftynet.application.autoencoder_application import SUPPORTED_INFERENCE
     parser.add_argument(
         "--inference_type",
@@ -223,6 +283,12 @@ def __add_autoencoder_args(parser):
 
 
 def __add_registration_args(parser):
+    """
+    keywords defined for image registration
+
+    :param parser:
+    :return:
+    """
     parser.add_argument(
         "--label_normalisation",
         metavar='',
